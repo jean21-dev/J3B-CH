@@ -7,100 +7,311 @@
 <title>J3B</title>
 <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
 <div id="loginView" class="login-view">
   <div class="login-box">
+
     <div class="logo-mark">J3B</div>
-    <div class="login-title">J3B</div>
-    <div class="login-sub">mensagens sem complicação</div>
 
-    <input id="usernameInput" maxlength="24" placeholder="Seu username" autocomplete="off">
-    <button id="enterBtn">Entrar</button>
+    <h1>J3B</h1>
+    <p class="subtitle">mensagens simples</p>
 
-    <p class="hint">O username precisa ser único entre quem estiver online.</p>
-    <div id="loginError" class="login-error"></div>
+    <input
+      id="usernameInput"
+      maxlength="24"
+      placeholder="username"
+      autocomplete="off"
+    >
+
+    <button id="enterBtn">
+      Entrar
+    </button>
+
+    <button
+      id="changeUsername"
+      class="link-btn"
+    >
+      Trocar username
+    </button>
+
+    <div
+      id="loginError"
+      class="login-error"
+    ></div>
   </div>
 </div>
+
 
 <div id="appView" class="app hidden">
-  <aside id="sidebar" class="sidebar">
+
+  <aside
+    id="sidebar"
+    class="sidebar"
+  >
+
     <div class="side-head">
-      <div class="mini-logo">J3B</div>
-      <button id="closeSide" class="ghost">×</button>
+
+      <div class="mini-logo">
+        J3B
+      </div>
+
+      <button
+        id="closeSide"
+        class="ghost"
+      >
+        ×
+      </button>
+
     </div>
+
 
     <div class="me">
-      <div id="myAvatar" class="avatar">J</div>
+
+      <div
+        id="myAvatar"
+        class="avatar"
+      >
+        J3
+      </div>
+
       <div>
-        <strong id="myUsername">—</strong>
+        <strong id="myUsername">
+          @—
+        </strong>
+
         <span>online</span>
       </div>
-      <button id="adminOpen" class="admin-eye hidden">◉</button>
+
+      <button
+        id="adminOpen"
+        class="admin-eye hidden"
+      >
+        •
+      </button>
+
     </div>
 
-    <div class="label">PESSOAS ONLINE</div>
-    <div id="users" class="users"></div>
+
+    <div class="search-box">
+
+      <input
+        id="searchInput"
+        type="search"
+        placeholder="Pesquisar username..."
+        autocomplete="off"
+      >
+
+    </div>
+
+
+    <div
+      id="searchResults"
+      class="search-results"
+    ></div>
+
+
+    <div class="label">
+      ONLINE
+    </div>
+
+
+    <div
+      id="users"
+      class="users"
+    ></div>
+
 
     <div class="side-foot">
+
       <span>J3B</span>
-      <span id="connectionLabel">conectado</span>
+
+      <span
+        id="connectionLabel"
+      >
+        conectando...
+      </span>
+
     </div>
+
   </aside>
 
+
   <main class="chat">
+
     <header class="chat-head">
-      <button id="openSide" class="ghost mobile">☰</button>
-      <div id="chatAvatar" class="avatar">J</div>
+
+      <button
+        id="openSide"
+        class="ghost mobile"
+      >
+        ☰
+      </button>
+
+      <div
+        id="chatAvatar"
+        class="avatar"
+      >
+        J
+      </div>
+
       <div class="chat-person">
-        <strong id="chatUser">Selecione alguém</strong>
-        <span id="chatStatus">—</span>
+
+        <strong id="chatUser">
+          Selecione alguém
+        </strong>
+
+        <span id="chatStatus">
+          —
+        </span>
+
       </div>
-      <div class="head-actions">
-        <button id="clearLocal" class="ghost" title="Limpar tela">⌫</button>
-      </div>
+
+      <button
+        id="clearLocal"
+        class="ghost"
+      >
+        ⌫
+      </button>
+
     </header>
 
-    <section id="empty" class="empty">
-      <div class="empty-mark">J3B</div>
-      <h2>Comece uma conversa</h2>
-      <p>Escolha alguém que esteja online.</p>
+
+    <section
+      id="empty"
+      class="empty"
+    >
+
+      <div class="empty-mark">
+        J3B
+      </div>
+
+      <h2>
+        Comece uma conversa
+      </h2>
+
+      <p>
+        Pesquise um username ou escolha alguém online.
+      </p>
+
     </section>
 
-    <section id="messages" class="messages hidden"></section>
-    <div id="typing" class="typing hidden"></div>
 
-    <form id="composer" class="composer hidden">
-      <label class="attach" title="Foto">
+    <section
+      id="messages"
+      class="messages hidden"
+    ></section>
+
+
+    <div
+      id="typing"
+      class="typing hidden"
+    ></div>
+
+
+    <form
+      id="composer"
+      class="composer hidden"
+    >
+
+      <label
+        class="attach"
+        title="Enviar foto"
+      >
         +
-        <input id="photo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+
+        <input
+          id="photo"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          hidden
+        >
+
       </label>
-      <input id="message" maxlength="4000" placeholder="Mensagem..." autocomplete="off">
-      <button class="send" type="submit">➤</button>
+
+
+      <input
+        id="message"
+        maxlength="4000"
+        placeholder="Mensagem..."
+        autocomplete="off"
+      >
+
+
+      <button
+        class="send"
+        type="submit"
+      >
+        ➤
+      </button>
+
     </form>
+
   </main>
+
 </div>
 
-<div id="adminPanel" class="admin-panel hidden">
+
+<div
+  id="adminPanel"
+  class="admin-panel hidden"
+>
+
   <div class="admin-box">
-    <button id="adminClose" class="ghost close">×</button>
-    <div class="admin-title">J3B <span>admin</span></div>
-    <div class="admin-grid">
-      <div>
-        <div class="admin-label">USUÁRIOS ONLINE</div>
-        <div id="adminUsers"></div>
-      </div>
-      <div>
-        <div class="admin-label">MENSAGENS EM MEMÓRIA</div>
-        <div id="adminMessages"></div>
-      </div>
+
+    <button
+      id="adminClose"
+      class="ghost close"
+    >
+      ×
+    </button>
+
+    <div class="admin-title">
+      J3B <span>admin</span>
     </div>
-    <div class="admin-note">Os dados mostrados aqui são temporários e ficam somente na memória do servidor.</div>
+
+    <div class="admin-grid">
+
+      <div>
+
+        <div class="admin-label">
+          ONLINE
+        </div>
+
+        <div id="adminUsers"></div>
+
+      </div>
+
+
+      <div>
+
+        <div class="admin-label">
+          MENSAGENS
+        </div>
+
+        <div id="adminMessages"></div>
+
+      </div>
+
+    </div>
+
+    <div class="admin-note">
+      Dados temporários em memória. Nenhuma senha é mostrada ou armazenada pelo app.
+    </div>
+
   </div>
+
 </div>
 
-<div id="toast" class="toast hidden"></div>
+
+<div
+  id="toast"
+  class="toast hidden"
+></div>
+
 
 <script src="app.js"></script>
+
 </body>
 </html>

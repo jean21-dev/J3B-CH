@@ -1,186 +1,1211 @@
-let ws;
+let ws = null;
+
 let me = "";
 let current = "";
+
 let users = [];
-const historyCache = new Map();
+let searchTimer = null;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let shouldReconnect = true;
+
+const histories = new Map();
+
+const SERVER_URL = "wss://j3b-ch.onrender.com";
 
 const $ = id => document.getElementById(id);
-const loginView = $("loginView");
-const appView = $("appView");
 
-function initials(n="J3B"){
-  return n.replace(/^@/,"").slice(0,2).toUpperCase();
-}
-function toast(t){
-  $("toast").textContent=t; $("toast").classList.remove("hidden");
-  clearTimeout(toast.t); toast.t=setTimeout(()=>$("toast").classList.add("hidden"),2200);
-}
-function send(o){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(o)); }
-
-function start(){
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}`);
-
-  ws.onopen = () => $("connectionLabel").textContent="conectado";
-  ws.onclose = () => {
-    $("connectionLabel").textContent="desconectado";
-    toast("Conexão encerrada.");
-  };
-  ws.onerror = () => toast("Não foi possível conectar.");
-
-  ws.onmessage = e => {
-    let d; try{ d=JSON.parse(e.data) } catch{return}
-    if(d.type==="login_ok"){
-      me=d.username;
-      loginView.classList.add("hidden");
-      appView.classList.remove("hidden");
-      $("myUsername").textContent="@"+me;
-      $("myAvatar").textContent=initials(me);
-      if(me==="lanzoh21") $("adminOpen").classList.remove("hidden");
-    }
-    if(d.type==="users"){
-      users=d.users;
-      renderUsers();
-      $("chatStatus").textContent = current && users.some(u=>u.username===current) ? "online" : "offline";
-    }
-    if(d.type==="history"){
-      historyCache.set(d.withUser,d.messages || []);
-      if(current===d.withUser) renderMessages(d.messages || []);
-    }
-    if(d.type==="message"){
-      const other=d.message.from===me?d.message.to:d.message.from;
-      const arr=historyCache.get(other)||[];
-      if(!arr.some(x=>x.id===d.message.id)) arr.push(d.message);
-      historyCache.set(other,arr);
-      if(current===other) renderMessages(arr);
-      else toast("Nova mensagem de @"+d.message.from);
-    }
-    if(d.type==="typing"){
-      if(current===d.from){
-        $("typing").textContent=d.active ? "@"+d.from+" está digitando..." : "";
-        $("typing").classList.toggle("hidden",!d.active);
-      }
-    }
-    if(d.type==="admin_snapshot") renderAdmin(d);
-    if(d.type==="error") toast(d.message);
-  };
+function setHidden(id, hidden) {
+  $(id).classList.toggle("hidden", hidden);
 }
 
-function renderUsers(){
-  $("users").innerHTML="";
-  users.filter(u=>u.username!==me).forEach(u=>{
-    const el=document.createElement("div");
-    el.className="user"+(u.username===current?" active":"");
-    el.innerHTML=`<div class="avatar">${initials(u.username)}</div>
-      <div class="uinfo"><strong>@${u.username}</strong><small>online</small></div><span class="dot"></span>`;
-    el.onclick=()=>openUser(u.username);
-    $("users").appendChild(el);
-  });
-  if(users.length<=1){
-    $("users").innerHTML='<div style="padding:18px;color:#555;font-size:11px">Ninguém mais está online.</div>';
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[char]));
+}
+
+function initials(text = "J3B") {
+  return text.replace(/^@/, "").slice(0, 2).toUpperCase();
+}
+
+function toast(text) {
+  const el = $("toast");
+  el.textContent = text;
+  el.classList.remove("hidden");
+
+  clearTimeout(toast.timer);
+
+  toast.timer = setTimeout(() => {
+    el.classList.add("hidden");
+  }, 2500);
+}
+
+function connectionStatus(mode, text) {
+  const el = $("connectionLabel");
+  if (!el) return;
+
+  el.textContent = text;
+
+  if (mode === "ok") {
+    el.style.color = "#4fd995";
+  } else if (mode === "loading") {
+    el.style.color = "#e5b84b";
+  } else {
+    el.style.color = "#ff7777";
   }
 }
 
-function openUser(username){
-  current=username;
-  $("chatUser").textContent="@"+username;
-  $("chatStatus").textContent="online";
-  $("chatAvatar").textContent=initials(username);
-  $("empty").classList.add("hidden");
-  $("messages").classList.remove("hidden");
-  $("composer").classList.remove("hidden");
-  $("sidebar").classList.remove("open");
-  send({action:"history",withUser:username});
-}
-
-function renderMessages(list){
-  const box=$("messages");
-  box.innerHTML="";
-  for(const m of list){
-    const el=document.createElement("div");
-    el.className="bubble "+(m.from===me?"mine":"theirs");
-    let content="";
-    if(m.type==="image"){
-      const img=document.createElement("img");
-      img.src=m.dataUrl; img.alt="foto";
-      img.onclick=()=>window.open(m.dataUrl,"_blank");
-      el.appendChild(img);
-      if(m.body) content += escapeHtml(m.body);
-    } else {
-      content=escapeHtml(m.body).replace(/\n/g,"<br>");
-      el.innerHTML += content;
-    }
-    if(m.type==="image" && content){
-      const p=document.createElement("div"); p.innerHTML=content; el.appendChild(p);
-    }
-    const time=document.createElement("span");
-    time.className="time";
-    time.textContent=new Date(m.at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-    el.appendChild(time);
-    box.appendChild(el);
+function send(data) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return false;
   }
-  box.scrollTop=box.scrollHeight;
+
+  ws.send(JSON.stringify(data));
+  return true;
 }
 
-function escapeHtml(s){
-  return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+/* =========================
+   USERNAME LOCAL
+========================= */
+
+function getSavedUsername() {
+  try {
+    return localStorage.getItem("j3b_username") || "";
+  } catch {
+    return "";
+  }
 }
 
-$("enterBtn").onclick=()=>{
-  const u=$("usernameInput").value.trim().toLowerCase();
-  if(!/^[a-z0-9_]{3,24}$/.test(u)){
-    $("loginError").textContent="Use 3–24 caracteres: letras, números ou _.";
+function saveUsername(username) {
+  try {
+    localStorage.setItem(
+      "j3b_username",
+      username
+    );
+  } catch {}
+}
+
+function removeSavedUsername() {
+  try {
+    localStorage.removeItem(
+      "j3b_username"
+    );
+  } catch {}
+}
+
+/* =========================
+   CONEXÃO
+========================= */
+
+function connect() {
+  if (!shouldReconnect) return;
+
+  if (
+    ws &&
+    (
+      ws.readyState === WebSocket.OPEN ||
+      ws.readyState === WebSocket.CONNECTING
+    )
+  ) {
     return;
   }
-  $("loginError").textContent="";
-  send({action:"login",username:u});
-};
-$("usernameInput").addEventListener("keydown",e=>{if(e.key==="Enter")$("enterBtn").click()});
 
-$("composer").onsubmit=e=>{
-  e.preventDefault();
-  const input=$("message"), body=input.value.trim();
-  if(!body||!current)return;
-  send({action:"message",to:current,body});
-  input.value="";
-};
+  connectionStatus(
+    "loading",
+    "conectando..."
+  );
 
-$("message").addEventListener("input",()=>{
-  if(!current)return;
-  send({action:"typing",to:current,active:$("message").value.length>0});
-});
-
-$("photo").onchange=async()=>{
-  const file=$("photo").files[0]; $("photo").value="";
-  if(!file||!current)return;
-  if(file.size>4.5*1024*1024){toast("Foto grande demais.");return;}
-  const reader=new FileReader();
-  reader.onload=()=>send({action:"photo",to:current,dataUrl:reader.result});
-  reader.readAsDataURL(file);
-};
-
-$("openSide").onclick=()=>$("sidebar").classList.add("open");
-$("closeSide").onclick=()=>$("sidebar").classList.remove("open");
-$("clearLocal").onclick=()=>{ $("messages").innerHTML=""; historyCache.delete(current); };
-$("adminOpen").onclick=()=>{ $("adminPanel").classList.remove("hidden"); send({action:"admin_snapshot"}); };
-$("adminClose").onclick=()=>$("adminPanel").classList.add("hidden");
-
-function renderAdmin(d){
-  $("adminUsers").innerHTML="";
-  for(const u of d.users){
-    const x=document.createElement("div");x.className="admin-item";x.textContent="@"+u;$("adminUsers").appendChild(x);
+  try {
+    ws = new WebSocket(
+      SERVER_URL
+    );
+  } catch {
+    connectionStatus(
+      "error",
+      "erro"
+    );
+    scheduleReconnect();
+    return;
   }
-  $("adminMessages").innerHTML="";
-  for(const m of d.messages){
-    const x=document.createElement("div");x.className="admin-item";
-    if(m.type==="image"){
-      x.innerHTML=`<strong>@${escapeHtml(m.from)} → @${escapeHtml(m.to)}</strong><span>[foto temporária]</span>`;
-      const img=document.createElement("img");img.src=m.dataUrl;img.style.maxWidth="180px";img.style.marginTop="6px";img.style.borderRadius="8px";x.appendChild(img);
-    }else{
-      x.innerHTML=`<strong>@${escapeHtml(m.from)} → @${escapeHtml(m.to)}</strong><span>${escapeHtml(m.body)}</span>`;
+
+  ws.onopen = () => {
+    reconnectAttempt = 0;
+
+    connectionStatus(
+      "ok",
+      "conectado"
+    );
+
+    const saved = getSavedUsername();
+
+    if (saved) {
+      loginWithUsername(saved);
     }
-    $("adminMessages").appendChild(x);
+  };
+
+  ws.onmessage = event => {
+    let data;
+
+    try {
+      data = JSON.parse(
+        event.data
+      );
+    } catch {
+      return;
+    }
+
+    handleServer(data);
+  };
+
+  ws.onerror = () => {
+    connectionStatus(
+      "error",
+      "erro"
+    );
+  };
+
+  ws.onclose = () => {
+    ws = null;
+
+    connectionStatus(
+      "error",
+      "desconectado"
+    );
+
+    if (shouldReconnect) {
+      scheduleReconnect();
+    }
+  };
+}
+
+function scheduleReconnect() {
+  if (!shouldReconnect) return;
+  if (reconnectTimer) return;
+
+  reconnectAttempt++;
+
+  const delay = Math.min(
+    30000,
+    1000 *
+      Math.pow(
+        2,
+        reconnectAttempt - 1
+      )
+  );
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, delay);
+
+  toast(
+    "Reconectando em " +
+    Math.ceil(delay / 1000) +
+    "s..."
+  );
+}
+
+/* =========================
+   LOGIN
+========================= */
+
+function loginWithUsername(username) {
+  username = String(username)
+    .trim()
+    .toLowerCase();
+
+  if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+    return;
+  }
+
+  send({
+    action: "login",
+    username
+  });
+}
+
+function enterApp(username, isAdmin) {
+  me = username;
+
+  saveUsername(username);
+
+  setHidden("loginView", true);
+  setHidden("appView", false);
+
+  $("myUsername").textContent =
+    "@" + username;
+
+  $("myAvatar").textContent =
+    initials(username);
+
+  if (
+    isAdmin &&
+    username === "lanzoh21"
+  ) {
+    setHidden(
+      "adminOpen",
+      false
+    );
+  } else {
+    setHidden(
+      "adminOpen",
+      true
+    );
+  }
+
+  $("searchInput").focus();
+}
+
+function showLogin() {
+  setHidden("appView", true);
+  setHidden("loginView", false);
+
+  $("usernameInput").value =
+    getSavedUsername();
+}
+
+/* =========================
+   SERVIDOR
+========================= */
+
+function handleServer(data) {
+
+  if (data.type === "login_ok") {
+
+    enterApp(
+      data.username,
+      data.isAdmin
+    );
+
+    return;
+  }
+
+  if (data.type === "login_taken") {
+
+    /*
+      Não apagamos o username salvo.
+      Só permitimos escolher outro.
+    */
+
+    toast(data.message);
+
+    setHidden(
+      "loginView",
+      false
+    );
+
+    setHidden(
+      "appView",
+      true
+    );
+
+    $("loginError").textContent =
+      data.message;
+
+    return;
+  }
+
+  if (data.type === "users") {
+
+    users =
+      data.users || [];
+
+    renderUsers();
+
+    if (current) {
+      const online =
+        users.some(
+          u =>
+            u.username ===
+            current
+        );
+
+      $("chatStatus").textContent =
+        online
+          ? "online"
+          : "offline";
+    }
+
+    return;
+  }
+
+  if (
+    data.type ===
+    "search_results"
+  ) {
+
+    renderSearchResults(
+      data.users || []
+    );
+
+    return;
+  }
+
+  if (
+    data.type ===
+    "history"
+  ) {
+
+    histories.set(
+      data.withUser,
+      data.messages || []
+    );
+
+    if (
+      current ===
+      data.withUser
+    ) {
+      renderMessages(
+        data.messages || []
+      );
+    }
+
+    return;
+  }
+
+  if (
+    data.type ===
+    "message"
+  ) {
+
+    const message =
+      data.message;
+
+    const other =
+      message.from === me
+        ? message.to
+        : message.from;
+
+    let history =
+      histories.get(
+        other
+      ) || [];
+
+    if (
+      !history.some(
+        m =>
+          m.id ===
+          message.id
+      )
+    ) {
+      history.push(message);
+    }
+
+    histories.set(
+      other,
+      history
+    );
+
+    if (
+      current === other
+    ) {
+      renderMessages(history);
+    } else {
+      toast(
+        "Nova mensagem de @" +
+        message.from
+      );
+    }
+
+    return;
+  }
+
+  if (
+    data.type === "typing"
+  ) {
+
+    if (
+      current === data.from
+    ) {
+
+      $("typing").textContent =
+        data.active
+          ? "@" +
+            data.from +
+            " está digitando..."
+          : "";
+
+      setHidden(
+        "typing",
+        !data.active
+      );
+    }
+
+    return;
+  }
+
+  if (
+    data.type ===
+    "admin_snapshot"
+  ) {
+
+    renderAdmin(data);
+
+    return;
+  }
+
+  if (data.type === "error") {
+
+    toast(data.message);
+
+    return;
   }
 }
 
-start();
+/* =========================
+   LISTA DE ONLINE
+========================= */
+
+function renderUsers() {
+
+  const box = $("users");
+
+  box.innerHTML = "";
+
+  const list =
+    users.filter(
+      user =>
+        user.username !== me
+    );
+
+  if (!list.length) {
+
+    box.innerHTML =
+      '<div class="empty-users">Ninguém mais está online.</div>';
+
+    return;
+  }
+
+  list.forEach(user => {
+
+    const item =
+      document.createElement(
+        "div"
+      );
+
+    item.className =
+      "user" +
+      (
+        user.username === current
+          ? " active"
+          : ""
+      );
+
+    item.innerHTML = `
+      <div class="avatar">
+        ${initials(user.username)}
+      </div>
+
+      <div class="uinfo">
+        <strong>
+          @${escapeHtml(user.username)}
+        </strong>
+
+        <small>
+          online
+        </small>
+      </div>
+
+      <span class="dot"></span>
+    `;
+
+    item.onclick = () => {
+      openUser(
+        user.username
+      );
+    };
+
+    box.appendChild(item);
+  });
+}
+
+/* =========================
+   PESQUISA
+========================= */
+
+function searchUsers() {
+
+  clearTimeout(
+    searchTimer
+  );
+
+  const query =
+    $("searchInput")
+      .value
+      .trim();
+
+  if (!query) {
+    $("searchResults").innerHTML = "";
+    return;
+  }
+
+  searchTimer =
+    setTimeout(() => {
+
+      if (
+        !send({
+          action:
+            "search_users",
+          query
+        })
+      ) {
+        toast(
+          "Sem conexão."
+        );
+      }
+
+    }, 250);
+}
+
+function renderSearchResults(list) {
+
+  const box =
+    $("searchResults");
+
+  box.innerHTML = "";
+
+  if (!list.length) {
+
+    box.innerHTML =
+      '<div class="search-empty">Nenhum usuário encontrado.</div>';
+
+    return;
+  }
+
+  list.forEach(user => {
+
+    const item =
+      document.createElement(
+        "div"
+      );
+
+    item.className =
+      "search-result";
+
+    item.innerHTML = `
+      <div class="avatar">
+        ${initials(user.username)}
+      </div>
+
+      <div class="result-info">
+        <strong>
+          @${escapeHtml(user.username)}
+        </strong>
+        <small>online</small>
+      </div>
+
+      <button>
+        Chat
+      </button>
+    `;
+
+    item
+      .querySelector("button")
+      .onclick = () => {
+        openUser(
+          user.username
+        );
+      };
+
+    box.appendChild(item);
+  });
+}
+
+$("searchInput")
+  .addEventListener(
+    "input",
+    searchUsers
+  );
+
+/* =========================
+   CHAT
+========================= */
+
+function openUser(username) {
+
+  current =
+    username;
+
+  $("chatUser")
+    .textContent =
+    "@" + username;
+
+  $("chatStatus")
+    .textContent =
+    "online";
+
+  $("chatAvatar")
+    .textContent =
+    initials(username);
+
+  setHidden(
+    "empty",
+    true
+  );
+
+  setHidden(
+    "messages",
+    false
+  );
+
+  setHidden(
+    "composer",
+    false
+  );
+
+  setHidden(
+    "typing",
+    true
+  );
+
+  $("searchResults")
+    .innerHTML = "";
+
+  $("searchInput")
+    .value = "";
+
+  $("sidebar")
+    .classList
+    .remove("open");
+
+  if (
+    !send({
+      action:
+        "history",
+      withUser:
+        username
+    })
+  ) {
+    toast(
+      "Aguardando conexão..."
+    );
+  }
+}
+
+function renderMessages(list) {
+
+  const box =
+    $("messages");
+
+  box.innerHTML = "";
+
+  list.forEach(message => {
+
+    const bubble =
+      document.createElement(
+        "div"
+      );
+
+    bubble.className =
+      "bubble " +
+      (
+        message.from === me
+          ? "mine"
+          : "theirs"
+      );
+
+    if (
+      message.type ===
+      "image"
+    ) {
+
+      const image =
+        document.createElement(
+          "img"
+        );
+
+      image.src =
+        message.dataUrl;
+
+      image.alt =
+        "Foto";
+
+      image.onclick = () =>
+        window.open(
+          message.dataUrl,
+          "_blank"
+        );
+
+      bubble.appendChild(
+        image
+      );
+
+    } else {
+
+      bubble.innerHTML =
+        escapeHtml(
+          message.body
+        ).replace(
+          /\n/g,
+          "<br>"
+        );
+    }
+
+    const time =
+      document.createElement(
+        "span"
+      );
+
+    time.className =
+      "time";
+
+    time.textContent =
+      formatTime(
+        message.at
+      );
+
+    bubble.appendChild(
+      time
+    );
+
+    box.appendChild(
+      bubble
+    );
+  });
+
+  box.scrollTop =
+    box.scrollHeight;
+}
+
+function formatTime(value) {
+
+  try {
+    return new Date(value)
+      .toLocaleTimeString(
+        "pt-BR",
+        {
+          hour: "2-digit",
+          minute: "2-digit"
+        }
+      );
+  } catch {
+    return "";
+  }
+}
+
+/* =========================
+   ENVIAR TEXTO
+========================= */
+
+$("composer").onsubmit =
+  event => {
+
+    event.preventDefault();
+
+    const body =
+      $("message")
+        .value
+        .trim();
+
+    if (!body)
+      return;
+
+    if (!current) {
+      toast(
+        "Escolha alguém."
+      );
+      return;
+    }
+
+    if (
+      !send({
+        action:
+          "message",
+        to:
+          current,
+        body
+      })
+    ) {
+
+      toast(
+        "Sem conexão."
+      );
+
+      return;
+    }
+
+    $("message").value = "";
+
+    send({
+      action:
+        "typing",
+      to:
+        current,
+      active: false
+    });
+  };
+
+/* =========================
+   DIGITANDO
+========================= */
+
+$("message")
+  .addEventListener(
+    "input",
+    () => {
+
+      if (!current)
+        return;
+
+      send({
+        action:
+          "typing",
+        to:
+          current,
+        active:
+          $("message")
+            .value
+            .length > 0
+      });
+    }
+  );
+
+/* =========================
+   FOTO
+========================= */
+
+$("photo")
+  .addEventListener(
+    "change",
+    () => {
+
+      const file =
+        $("photo").files[0];
+
+      $("photo").value = "";
+
+      if (!file)
+        return;
+
+      if (!current) {
+        toast(
+          "Escolha alguém."
+        );
+        return;
+      }
+
+      if (
+        !file.type.startsWith(
+          "image/"
+        )
+      ) {
+        toast(
+          "Escolha uma imagem."
+        );
+        return;
+      }
+
+      if (
+        file.size >
+        4.5 * 1024 * 1024
+      ) {
+        toast(
+          "Foto grande demais."
+        );
+        return;
+      }
+
+      const reader =
+        new FileReader();
+
+      reader.onload = () => {
+
+        if (
+          !send({
+            action:
+              "photo",
+            to:
+              current,
+            dataUrl:
+              reader.result
+          })
+        ) {
+          toast(
+            "Sem conexão."
+          );
+        }
+      };
+
+      reader.onerror = () =>
+        toast(
+          "Não foi possível carregar a foto."
+        );
+
+      reader.readAsDataURL(
+        file
+      );
+    }
+  );
+
+/* =========================
+   LOGIN MANUAL
+========================= */
+
+$("enterBtn").onclick =
+  () => {
+
+    const username =
+      $("usernameInput")
+        .value
+        .trim()
+        .toLowerCase();
+
+    if (
+      !/^[a-z0-9_]{3,24}$/
+        .test(username)
+    ) {
+
+      $("loginError")
+        .textContent =
+        "Use 3–24 caracteres: letras, números ou _.";
+
+      return;
+    }
+
+    $("loginError")
+      .textContent = "";
+
+    if (
+      !ws ||
+      ws.readyState !==
+      WebSocket.OPEN
+    ) {
+
+      toast(
+        "Conectando..."
+      );
+
+      return;
+    }
+
+    saveUsername(username);
+
+    loginWithUsername(
+      username
+    );
+  };
+
+$("usernameInput")
+  .addEventListener(
+    "keydown",
+    event => {
+
+      if (
+        event.key ===
+        "Enter"
+      ) {
+        $("enterBtn").click();
+      }
+
+    }
+  );
+
+/* =========================
+   NOVO USERNAME
+========================= */
+
+$("changeUsername")
+  .onclick = () => {
+
+    removeSavedUsername();
+
+    me = "";
+    current = "";
+
+    histories.clear();
+
+    $("usernameInput")
+      .value = "";
+
+    $("loginError")
+      .textContent = "";
+
+    showLogin();
+  };
+
+/* =========================
+   MOBILE
+========================= */
+
+$("openSide")
+  .onclick = () =>
+    $("sidebar")
+      .classList
+      .add("open");
+
+$("closeSide")
+  .onclick = () =>
+    $("sidebar")
+      .classList
+      .remove("open");
+
+/* =========================
+   LIMPAR TELA
+========================= */
+
+$("clearLocal")
+  .onclick = () => {
+
+    if (!current)
+      return;
+
+    histories.delete(
+      current
+    );
+
+    $("messages")
+      .innerHTML = "";
+  };
+
+/* =========================
+   ADMIN
+========================= */
+
+$("adminOpen")
+  .onclick = () => {
+
+    $("adminPanel")
+      .classList
+      .remove("hidden");
+
+    send({
+      action:
+        "admin_snapshot"
+    });
+  };
+
+$("adminClose")
+  .onclick = () =>
+    $("adminPanel")
+      .classList
+      .add("hidden");
+
+function renderAdmin(data) {
+
+  $("adminUsers")
+    .innerHTML = "";
+
+  $("adminMessages")
+    .innerHTML = "";
+
+  data.users.forEach(user => {
+
+    const item =
+      document.createElement(
+        "div"
+      );
+
+    item.className =
+      "admin-item";
+
+    item.textContent =
+      "@" + user.username;
+
+    $("adminUsers")
+      .appendChild(item);
+  });
+
+  data.messages.forEach(message => {
+
+    const item =
+      document.createElement(
+        "div"
+      );
+
+    item.className =
+      "admin-item";
+
+    const title =
+      document.createElement(
+        "strong"
+      );
+
+    title.textContent =
+      "@" +
+      message.from +
+      " → @" +
+      message.to;
+
+    item.appendChild(
+      title
+    );
+
+    if (
+      message.type ===
+      "image"
+    ) {
+
+      const label =
+        document.createElement(
+          "span"
+        );
+
+      label.textContent =
+        "[foto]";
+
+      item.appendChild(
+        label
+      );
+
+      const image =
+        document.createElement(
+          "img"
+        );
+
+      image.src =
+        message.dataUrl;
+
+      image.style.width =
+        "160px";
+
+      image.style.display =
+        "block";
+
+      image.style.marginTop =
+        "6px";
+
+      image.style.borderRadius =
+        "8px";
+
+      item.appendChild(
+        image
+      );
+
+    } else {
+
+      const text =
+        document.createElement(
+          "span"
+        );
+
+      text.textContent =
+        message.body;
+
+      item.appendChild(
+        text
+      );
+    }
+
+    $("adminMessages")
+      .appendChild(item);
+  });
+}
+
+/* =========================
+   INICIALIZAÇÃO
+========================= */
+
+(function init() {
+
+  $("usernameInput")
+    .value =
+    getSavedUsername();
+
+  connect();
+
+})();
