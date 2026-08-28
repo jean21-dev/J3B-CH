@@ -1,38 +1,30 @@
-J3B CHAT — SEM BANCO DE DADOS
+J3B CHAT — VERSÃO TEMPORÁRIA
 
-Este projeto usa Node.js + WebSocket e NÃO grava usuários ou mensagens em banco.
+Arquivos:
+server.js
+package.json
+public/index.html
+public/style.css
+public/app.js
 
-O que existe:
-- username único enquanto a pessoa está online;
-- mensagens em tempo real;
-- fotos em base64 somente na RAM;
-- lista de usuários online;
-- admin especial: @lanzoh21;
-- painel admin com usuários e mensagens temporárias.
+O servidor NÃO usa banco de dados.
+Os usuários e mensagens ficam somente na RAM do processo Node.js.
 
-Quando:
-- o usuário fecha/perde a conexão: a sessão é removida e as conversas envolvendo ela são apagadas;
-- o servidor reinicia: tudo é apagado;
-- não há banco de dados, arquivo de usuários ou histórico permanente.
+Comportamento:
+- Username é salvo localmente no aparelho para entrar automaticamente.
+- O username não é uma senha.
+- Usuários só aparecem na pesquisa quando estão online.
+- Ao fechar a conexão, o username fica disponível para outra pessoa e as conversas daquele usuário são removidas da RAM.
+- Reiniciar o servidor apaga tudo.
+- Fotos são mantidas em RAM como base64.
+- @lanzoh21 possui painel administrativo temporário.
+- Nenhuma senha é capturada, armazenada ou mostrada.
 
-IMPORTANTE SOBRE SENHAS:
-Esta versão não pede senha. Não existe senha para o servidor armazenar ou mostrar.
-Não implemente captura/visualização de senhas de outras pessoas.
+No Render:
+Build Command: npm install
+Start Command: npm start
 
-COMO RODAR:
-1. Instale Node.js.
-2. Abra um terminal nesta pasta.
-3. Rode:
-   npm install
-4. Depois:
-   npm start
-5. Abra:
-   http://localhost:3000
+URL usada no app.js:
+wss://j3b-ch.onrender.com
 
-Para testar com 2 pessoas:
-- abra o endereço em duas janelas/dispositivos que consigam acessar o mesmo servidor;
-- use usernames diferentes;
-- escolha a pessoa na lista;
-- mande texto ou foto.
-
-Para internet, você precisa hospedar o Node.js em um servidor que aceite WebSocket.
+Se a URL do seu Render mudar, troque SERVER_URL em public/app.js.

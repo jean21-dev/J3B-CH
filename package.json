@@ -1,9 +1,7 @@
 {
-  "name": "j3b-ephemeral-chat",
+  "name": "j3b-chat",
   "version": "1.0.0",
   "private": true,
-  "description": "J3B Chat temporário em memória",
-  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
