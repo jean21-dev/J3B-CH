@@ -1,7 +1,11 @@
-let ws;
+let ws = null;
 let me = "";
 let current = "";
 let users = [];
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let manuallyClosed = false;
+
 const historyCache = new Map();
 
 const SERVER_URL = "wss://j3b-ch.onrender.com";
@@ -11,12 +15,45 @@ const $ = (id) => document.getElementById(id);
 const loginView = $("loginView");
 const appView = $("appView");
 
+function setConnectionStatus(status, message) {
+    const label = $("connectionLabel");
+
+    if (status === "connecting") {
+        label.textContent = "conectando...";
+        label.style.color = "#e5b84b";
+    }
+
+    if (status === "connected") {
+        label.textContent = "conectado";
+        label.style.color = "#4fd995";
+    }
+
+    if (status === "error") {
+        label.textContent = "erro de conexão";
+        label.style.color = "#ff7070";
+    }
+
+    if (status === "offline") {
+        label.textContent = "desconectado";
+        label.style.color = "#777";
+    }
+
+    if (message) {
+        toast(message);
+    }
+}
+
 function initials(name = "J3B") {
-    return name.replace(/^@/, "").slice(0, 2).toUpperCase();
+    return name
+        .replace(/^@/, "")
+        .slice(0, 2)
+        .toUpperCase();
 }
 
 function toast(text) {
     const element = $("toast");
+
+    if (!element) return;
 
     element.textContent = text;
     element.classList.remove("hidden");
@@ -25,38 +62,115 @@ function toast(text) {
 
     toast.timer = setTimeout(() => {
         element.classList.add("hidden");
-    }, 2200);
+    }, 2500);
 }
 
 function send(data) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (
+        ws &&
+        ws.readyState === WebSocket.OPEN
+    ) {
         ws.send(JSON.stringify(data));
+        return true;
     }
+
+    return false;
 }
 
-function start() {
+/*
+====================================
+CONEXÃO
+====================================
+*/
 
-    ws = new WebSocket(SERVER_URL);
+function connect() {
+
+    if (manuallyClosed) return;
+
+    if (
+        ws &&
+        (
+            ws.readyState === WebSocket.OPEN ||
+            ws.readyState === WebSocket.CONNECTING
+        )
+    ) {
+        return;
+    }
+
+    setConnectionStatus(
+        "connecting"
+    );
+
+    try {
+
+        ws = new WebSocket(
+            SERVER_URL
+        );
+
+    } catch (error) {
+
+        setConnectionStatus(
+            "error",
+            "Erro ao criar conexão."
+        );
+
+        scheduleReconnect();
+
+        return;
+    }
 
     ws.onopen = () => {
 
-        $("connectionLabel").textContent = "conectado";
+        reconnectAttempt = 0;
 
-        console.log("Conectado ao servidor J3B");
+        setConnectionStatus(
+            "connected"
+        );
+
+        /*
+        Se o usuário já tinha entrado,
+        tenta entrar novamente após
+        uma reconexão.
+        */
+
+        if (me) {
+
+            send({
+                action: "login",
+                username: me
+            });
+
+        }
 
     };
 
     ws.onclose = () => {
 
-        $("connectionLabel").textContent = "desconectado";
+        ws = null;
 
-        toast("Conexão encerrada.");
+        setConnectionStatus(
+            "offline"
+        );
+
+        if (!manuallyClosed) {
+
+            scheduleReconnect();
+
+        }
 
     };
 
     ws.onerror = () => {
 
-        toast("Não foi possível conectar ao servidor.");
+        setConnectionStatus(
+            "error"
+        );
+
+        /*
+        O onclose normalmente será
+        chamado logo depois e fará
+        a reconexão.
+        */
 
     };
 
@@ -65,229 +179,319 @@ function start() {
         let data;
 
         try {
-            data = JSON.parse(event.data);
+
+            data = JSON.parse(
+                event.data
+            );
+
         } catch {
-            return;
-        }
-
-        /*
-        ==========================
-        LOGIN
-        ==========================
-        */
-
-        if (data.type === "login_ok") {
-
-            me = data.username;
-
-            loginView.classList.add("hidden");
-
-            appView.classList.remove("hidden");
-
-            $("myUsername").textContent = "@" + me;
-
-            $("myAvatar").textContent = initials(me);
-
-            /*
-            O usuário lanzoh21 recebe
-            acesso ao painel administrativo.
-            */
-
-            if (me === "lanzoh21") {
-
-                $("adminOpen").classList.remove("hidden");
-
-            }
 
             return;
+
         }
 
-        /*
-        ==========================
-        LISTA DE USUÁRIOS
-        ==========================
-        */
-
-        if (data.type === "users") {
-
-            users = data.users || [];
-
-            renderUsers();
-
-            if (current) {
-
-                const online = users.some(
-                    user => user.username === current
-                );
-
-                $("chatStatus").textContent =
-                    online ? "online" : "offline";
-
-            }
-
-            return;
-        }
-
-        /*
-        ==========================
-        HISTÓRICO TEMPORÁRIO
-        ==========================
-        */
-
-        if (data.type === "history") {
-
-            historyCache.set(
-                data.withUser,
-                data.messages || []
-            );
-
-            if (current === data.withUser) {
-
-                renderMessages(
-                    data.messages || []
-                );
-
-            }
-
-            return;
-        }
-
-        /*
-        ==========================
-        NOVA MENSAGEM
-        ==========================
-        */
-
-        if (data.type === "message") {
-
-            const message = data.message;
-
-            const other =
-                message.from === me
-                    ? message.to
-                    : message.from;
-
-            let conversation =
-                historyCache.get(other) || [];
-
-            /*
-            Evita mensagens duplicadas.
-            */
-
-            if (
-                !conversation.some(
-                    item => item.id === message.id
-                )
-            ) {
-
-                conversation.push(message);
-
-            }
-
-            historyCache.set(
-                other,
-                conversation
-            );
-
-            if (current === other) {
-
-                renderMessages(conversation);
-
-            } else {
-
-                toast(
-                    "Nova mensagem de @" +
-                    message.from
-                );
-
-            }
-
-            return;
-        }
-
-        /*
-        ==========================
-        DIGITANDO
-        ==========================
-        */
-
-        if (data.type === "typing") {
-
-            if (current === data.from) {
-
-                if (data.active) {
-
-                    $("typing").textContent =
-                        "@" +
-                        data.from +
-                        " está digitando...";
-
-                    $("typing")
-                        .classList
-                        .remove("hidden");
-
-                } else {
-
-                    $("typing").textContent = "";
-
-                    $("typing")
-                        .classList
-                        .add("hidden");
-
-                }
-
-            }
-
-            return;
-        }
-
-        /*
-        ==========================
-        ADMIN
-        ==========================
-        */
-
-        if (data.type === "admin_snapshot") {
-
-            renderAdmin(data);
-
-            return;
-        }
-
-        /*
-        ==========================
-        ERRO
-        ==========================
-        */
-
-        if (data.type === "error") {
-
-            toast(data.message);
-
-            return;
-        }
+        handleServerMessage(data);
 
     };
 }
 
 /*
 ====================================
-MOSTRAR USUÁRIOS
+RECONEXÃO AUTOMÁTICA
+====================================
+*/
+
+function scheduleReconnect() {
+
+    if (manuallyClosed) return;
+
+    if (reconnectTimer) return;
+
+    reconnectAttempt++;
+
+    /*
+    1s → 2s → 4s → 8s → 16s...
+    máximo de 30 segundos.
+    */
+
+    const delay =
+        Math.min(
+            30000,
+            1000 *
+            Math.pow(
+                2,
+                reconnectAttempt - 1
+            )
+        );
+
+    toast(
+        "Reconectando em " +
+        Math.ceil(delay / 1000) +
+        "s..."
+    );
+
+    reconnectTimer = setTimeout(
+        () => {
+
+            reconnectTimer = null;
+
+            connect();
+
+        },
+        delay
+    );
+}
+
+/*
+====================================
+MENSAGENS DO SERVIDOR
+====================================
+*/
+
+function handleServerMessage(data) {
+
+    /*
+    LOGIN
+    */
+
+    if (data.type === "login_ok") {
+
+        me = data.username;
+
+        loginView.classList.add(
+            "hidden"
+        );
+
+        appView.classList.remove(
+            "hidden"
+        );
+
+        $("myUsername").textContent =
+            "@" + me;
+
+        $("myAvatar").textContent =
+            initials(me);
+
+        if (me === "lanzoh21") {
+
+            $("adminOpen")
+                .classList
+                .remove("hidden");
+
+        }
+
+        return;
+    }
+
+    /*
+    USUÁRIOS
+    */
+
+    if (data.type === "users") {
+
+        users =
+            data.users || [];
+
+        renderUsers();
+
+        if (current) {
+
+            const online =
+                users.some(
+                    user =>
+                        user.username ===
+                        current
+                );
+
+            $("chatStatus").textContent =
+                online
+                    ? "online"
+                    : "offline";
+
+        }
+
+        return;
+    }
+
+    /*
+    HISTÓRICO
+    */
+
+    if (data.type === "history") {
+
+        historyCache.set(
+            data.withUser,
+            data.messages || []
+        );
+
+        if (
+            current ===
+            data.withUser
+        ) {
+
+            renderMessages(
+                data.messages || []
+            );
+
+        }
+
+        return;
+    }
+
+    /*
+    NOVA MENSAGEM
+    */
+
+    if (data.type === "message") {
+
+        const message =
+            data.message;
+
+        const other =
+            message.from === me
+                ? message.to
+                : message.from;
+
+        let conversation =
+            historyCache.get(
+                other
+            ) || [];
+
+        if (
+            !conversation.some(
+                item =>
+                    item.id ===
+                    message.id
+            )
+        ) {
+
+            conversation.push(
+                message
+            );
+
+        }
+
+        historyCache.set(
+            other,
+            conversation
+        );
+
+        if (
+            current === other
+        ) {
+
+            renderMessages(
+                conversation
+            );
+
+        } else {
+
+            toast(
+                "Nova mensagem de @" +
+                message.from
+            );
+
+        }
+
+        return;
+    }
+
+    /*
+    DIGITANDO
+    */
+
+    if (data.type === "typing") {
+
+        if (
+            current ===
+            data.from
+        ) {
+
+            if (data.active) {
+
+                $("typing")
+                    .textContent =
+                    "@" +
+                    data.from +
+                    " está digitando...";
+
+                $("typing")
+                    .classList
+                    .remove(
+                        "hidden"
+                    );
+
+            } else {
+
+                $("typing")
+                    .textContent =
+                    "";
+
+                $("typing")
+                    .classList
+                    .add(
+                        "hidden"
+                    );
+
+            }
+
+        }
+
+        return;
+    }
+
+    /*
+    ADMIN
+    */
+
+    if (
+        data.type ===
+        "admin_snapshot"
+    ) {
+
+        renderAdmin(
+            data
+        );
+
+        return;
+    }
+
+    /*
+    ERRO
+    */
+
+    if (data.type === "error") {
+
+        toast(
+            data.message
+        );
+
+        return;
+    }
+}
+
+/*
+====================================
+USUÁRIOS
 ====================================
 */
 
 function renderUsers() {
 
-    const container = $("users");
+    const container =
+        $("users");
 
     container.innerHTML = "";
 
     const otherUsers =
         users.filter(
-            user => user.username !== me
+            user =>
+                user.username !== me
         );
 
-    if (otherUsers.length === 0) {
+    if (
+        otherUsers.length === 0
+    ) {
 
         container.innerHTML =
             '<div style="padding:18px;color:#555;font-size:11px">' +
@@ -297,53 +501,62 @@ function renderUsers() {
         return;
     }
 
-    otherUsers.forEach(user => {
+    otherUsers.forEach(
+        user => {
 
-        const element =
-            document.createElement("div");
+            const element =
+                document.createElement(
+                    "div"
+                );
 
-        element.className =
-            "user" +
-            (
-                user.username === current
-                    ? " active"
-                    : ""
+            element.className =
+                "user" +
+                (
+                    user.username ===
+                    current
+                        ? " active"
+                        : ""
+                );
+
+            element.innerHTML = `
+                <div class="avatar">
+                    ${initials(user.username)}
+                </div>
+
+                <div class="uinfo">
+
+                    <strong>
+                        @${escapeHtml(user.username)}
+                    </strong>
+
+                    <small>
+                        online
+                    </small>
+
+                </div>
+
+                <span class="dot"></span>
+            `;
+
+            element.onclick = () => {
+
+                openUser(
+                    user.username
+                );
+
+            };
+
+            container.appendChild(
+                element
             );
 
-        element.innerHTML = `
-            <div class="avatar">
-                ${initials(user.username)}
-            </div>
-
-            <div class="uinfo">
-
-                <strong>
-                    @${escapeHtml(user.username)}
-                </strong>
-
-                <small>
-                    online
-                </small>
-
-            </div>
-
-            <span class="dot"></span>
-        `;
-
-        element.onclick = () => {
-
-            openUser(user.username);
-
-        };
-
-        container.appendChild(element);
-
-    });
+        }
+    );
 }
 
 /*
 ====================================
-ABRIR CONVERSA
+ABRIR USUÁRIO
 ====================================
 */
 
@@ -380,69 +593,104 @@ function openUser(username) {
         .classList
         .add("hidden");
 
-    send({
-        action: "history",
-        withUser: username
-    });
+    if (
+        !send({
+            action: "history",
+            withUser: username
+        })
+    ) {
 
+        toast(
+            "Aguardando conexão..."
+        );
+
+    }
 }
 
 /*
 ====================================
-MOSTRAR MENSAGENS
+MENSAGENS
 ====================================
 */
 
 function renderMessages(list) {
 
-    const box = $("messages");
+    const box =
+        $("messages");
 
     box.innerHTML = "";
 
-    list.forEach(message => {
+    list.forEach(
+        message => {
 
-        const bubble =
-            document.createElement("div");
-
-        bubble.className =
-            "bubble " +
-            (
-                message.from === me
-                    ? "mine"
-                    : "theirs"
-            );
-
-        /*
-        FOTO
-        */
-
-        if (message.type === "image") {
-
-            const image =
-                document.createElement("img");
-
-            image.src =
-                message.dataUrl;
-
-            image.alt = "Foto";
-
-            image.onclick = () => {
-
-                window.open(
-                    message.dataUrl,
-                    "_blank"
+            const bubble =
+                document.createElement(
+                    "div"
                 );
 
-            };
+            bubble.className =
+                "bubble " +
+                (
+                    message.from === me
+                        ? "mine"
+                        : "theirs"
+                );
 
-            bubble.appendChild(image);
+            if (
+                message.type ===
+                "image"
+            ) {
 
-            if (message.body) {
+                const image =
+                    document.createElement(
+                        "img"
+                    );
 
-                const text =
-                    document.createElement("div");
+                image.src =
+                    message.dataUrl;
 
-                text.innerHTML =
+                image.alt =
+                    "Foto";
+
+                image.onclick = () => {
+
+                    window.open(
+                        message.dataUrl,
+                        "_blank"
+                    );
+
+                };
+
+                bubble.appendChild(
+                    image
+                );
+
+                if (
+                    message.body
+                ) {
+
+                    const text =
+                        document.createElement(
+                            "div"
+                        );
+
+                    text.innerHTML =
+                        escapeHtml(
+                            message.body
+                        ).replace(
+                            /\n/g,
+                            "<br>"
+                        );
+
+                    bubble.appendChild(
+                        text
+                    );
+
+                }
+
+            } else {
+
+                bubble.innerHTML =
                     escapeHtml(
                         message.body
                     ).replace(
@@ -450,45 +698,31 @@ function renderMessages(list) {
                         "<br>"
                     );
 
-                bubble.appendChild(text);
-
             }
 
-        }
-
-        /*
-        TEXTO
-        */
-
-        else {
-
-            bubble.innerHTML =
-                escapeHtml(
-                    message.body
-                ).replace(
-                    /\n/g,
-                    "<br>"
+            const time =
+                document.createElement(
+                    "span"
                 );
 
+            time.className =
+                "time";
+
+            time.textContent =
+                formatTime(
+                    message.at
+                );
+
+            bubble.appendChild(
+                time
+            );
+
+            box.appendChild(
+                bubble
+            );
+
         }
-
-        /*
-        HORÁRIO
-        */
-
-        const time =
-            document.createElement("span");
-
-        time.className = "time";
-
-        time.textContent =
-            formatTime(message.at);
-
-        bubble.appendChild(time);
-
-        box.appendChild(bubble);
-
-    });
+    );
 
     box.scrollTop =
         box.scrollHeight;
@@ -504,14 +738,15 @@ function formatTime(date) {
 
     try {
 
-        return new Date(date)
-            .toLocaleTimeString(
-                "pt-BR",
-                {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                }
-            );
+        return new Date(
+            date
+        ).toLocaleTimeString(
+            "pt-BR",
+            {
+                hour: "2-digit",
+                minute: "2-digit"
+            }
+        );
 
     } catch {
 
@@ -528,25 +763,28 @@ ESCAPAR HTML
 
 function escapeHtml(text) {
 
-    return String(text ?? "")
-        .replace(
-            /[&<>"']/g,
-            character => {
+    return String(
+        text ?? ""
+    ).replace(
+        /[&<>"']/g,
+        character => {
 
-                const characters = {
+            const characters = {
 
-                    "&": "&amp;",
-                    "<": "&lt;",
-                    ">": "&gt;",
-                    '"': "&quot;",
-                    "'": "&#039;"
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#039;"
 
-                };
+            };
 
-                return characters[character];
+            return characters[
+                character
+            ];
 
-            }
-        );
+        }
+    );
 }
 
 /*
@@ -564,41 +802,51 @@ $("enterBtn").onclick = () => {
             .toLowerCase();
 
     if (
-        !/^[a-z0-9_]{3,24}$/.test(username)
+        !/^[a-z0-9_]{3,24}$/
+            .test(username)
     ) {
 
-        $("loginError").textContent =
+        $("loginError")
+            .textContent =
             "Use 3–24 caracteres: letras, números ou _.";
 
         return;
-
     }
 
-    $("loginError").textContent = "";
+    $("loginError")
+        .textContent = "";
+
+    /*
+    Guarda o username localmente
+    somente durante a execução da página.
+    */
+
+    me = username;
 
     if (
         !ws ||
-        ws.readyState !== WebSocket.OPEN
+        ws.readyState !==
+        WebSocket.OPEN
     ) {
 
         toast(
             "Conectando ao servidor..."
         );
 
-        return;
+        connect();
 
+        return;
     }
 
     send({
         action: "login",
         username: username
     });
-
 };
 
 /*
 ====================================
-ENTER NO CAMPO
+ENTER NO INPUT
 ====================================
 */
 
@@ -607,9 +855,13 @@ $("usernameInput")
         "keydown",
         event => {
 
-            if (event.key === "Enter") {
+            if (
+                event.key ===
+                "Enter"
+            ) {
 
-                $("enterBtn").click();
+                $("enterBtn")
+                    .click();
 
             }
 
@@ -618,55 +870,56 @@ $("usernameInput")
 
 /*
 ====================================
-ENVIAR MENSAGEM
+ENVIAR TEXTO
 ====================================
 */
 
-$("composer").onsubmit = event => {
+$("composer").onsubmit =
+    event => {
 
-    event.preventDefault();
+        event.preventDefault();
 
-    const input =
-        $("message");
+        const input =
+            $("message");
 
-    const body =
-        input.value.trim();
+        const body =
+            input.value.trim();
 
-    if (!body) return;
+        if (!body)
+            return;
 
-    if (!current) {
+        if (!current) {
 
-        toast(
-            "Escolha alguém primeiro."
-        );
+            toast(
+                "Escolha alguém primeiro."
+            );
 
-        return;
+            return;
+        }
 
-    }
+        if (
+            !send({
+                action: "message",
+                to: current,
+                body: body
+            })
+        ) {
 
-    send({
+            toast(
+                "Sem conexão com o servidor."
+            );
 
-        action: "message",
+            return;
+        }
 
-        to: current,
+        input.value = "";
 
-        body: body
-
-    });
-
-    input.value = "";
-
-    send({
-
-        action: "typing",
-
-        to: current,
-
-        active: false
-
-    });
-
-};
+        send({
+            action: "typing",
+            to: current,
+            active: false
+        });
+    };
 
 /*
 ====================================
@@ -679,7 +932,8 @@ $("message")
         "input",
         () => {
 
-            if (!current) return;
+            if (!current)
+                return;
 
             send({
 
@@ -699,91 +953,89 @@ $("message")
 
 /*
 ====================================
-ENVIAR FOTO
+FOTO
 ====================================
 */
 
-$("photo").onchange = () => {
+$("photo").onchange =
+    () => {
 
-    const file =
-        $("photo").files[0];
+        const file =
+            $("photo").files[0];
 
-    $("photo").value = "";
+        $("photo").value = "";
 
-    if (!file) return;
+        if (!file)
+            return;
 
-    if (!current) {
+        if (!current) {
 
-        toast(
-            "Escolha alguém primeiro."
+            toast(
+                "Escolha alguém primeiro."
+            );
+
+            return;
+        }
+
+        if (
+            file.size >
+            4.5 * 1024 * 1024
+        ) {
+
+            toast(
+                "Foto grande demais."
+            );
+
+            return;
+        }
+
+        if (
+            !file.type.startsWith(
+                "image/"
+            )
+        ) {
+
+            toast(
+                "Escolha uma imagem."
+            );
+
+            return;
+        }
+
+        const reader =
+            new FileReader();
+
+        reader.onload = () => {
+
+            if (
+                !send({
+                    action: "photo",
+                    to: current,
+                    dataUrl:
+                        reader.result
+                })
+            ) {
+
+                toast(
+                    "Sem conexão com o servidor."
+                );
+
+            }
+
+        };
+
+        reader.onerror = () => {
+
+            toast(
+                "Não foi possível carregar a foto."
+            );
+
+        };
+
+        reader.readAsDataURL(
+            file
         );
-
-        return;
-
-    }
-
-    /*
-    Limite aproximado de 4,5 MB.
-    */
-
-    if (
-        file.size >
-        4.5 * 1024 * 1024
-    ) {
-
-        toast(
-            "Foto grande demais."
-        );
-
-        return;
-
-    }
-
-    /*
-    Aceita somente imagens.
-    */
-
-    if (
-        !file.type.startsWith("image/")
-    ) {
-
-        toast(
-            "Escolha uma imagem."
-        );
-
-        return;
-
-    }
-
-    const reader =
-        new FileReader();
-
-    reader.onload = () => {
-
-        send({
-
-            action: "photo",
-
-            to: current,
-
-            dataUrl:
-                reader.result
-
-        });
-
     };
-
-    reader.onerror = () => {
-
-        toast(
-            "Não foi possível carregar a foto."
-        );
-
-    };
-
-    reader.readAsDataURL(file);
-
-};
 
 /*
 ====================================
@@ -791,21 +1043,23 @@ MENU MOBILE
 ====================================
 */
 
-$("openSide").onclick = () => {
+$("openSide").onclick =
+    () => {
 
-    $("sidebar")
-        .classList
-        .add("open");
+        $("sidebar")
+            .classList
+            .add("open");
 
-};
+    };
 
-$("closeSide").onclick = () => {
+$("closeSide").onclick =
+    () => {
 
-    $("sidebar")
-        .classList
-        .remove("open");
+        $("sidebar")
+            .classList
+            .remove("open");
 
-};
+    };
 
 /*
 ====================================
@@ -813,47 +1067,52 @@ LIMPAR TELA
 ====================================
 */
 
-$("clearLocal").onclick = () => {
+$("clearLocal").onclick =
+    () => {
 
-    if (!current) return;
+        if (!current)
+            return;
 
-    $("messages").innerHTML = "";
+        $("messages")
+            .innerHTML = "";
 
-    historyCache.delete(
-        current
-    );
-
-};
+        historyCache.delete(
+            current
+        );
+    };
 
 /*
 ====================================
-PAINEL ADMIN
+ADMIN
 ====================================
 */
 
-$("adminOpen").onclick = () => {
+$("adminOpen").onclick =
+    () => {
 
-    $("adminPanel")
-        .classList
-        .remove("hidden");
+        $("adminPanel")
+            .classList
+            .remove("hidden");
 
-    send({
-        action: "admin_snapshot"
-    });
+        send({
+            action:
+                "admin_snapshot"
+        });
 
-};
+    };
 
-$("adminClose").onclick = () => {
+$("adminClose").onclick =
+    () => {
 
-    $("adminPanel")
-        .classList
-        .add("hidden");
+        $("adminPanel")
+            .classList
+            .add("hidden");
 
-};
+    };
 
 /*
 ====================================
-MOSTRAR ADMIN
+ADMIN — MOSTRAR DADOS
 ====================================
 */
 
@@ -869,105 +1128,112 @@ function renderAdmin(data) {
 
     messagesBox.innerHTML = "";
 
-    /*
-    USUÁRIOS
-    */
+    data.users.forEach(
+        username => {
 
-    data.users.forEach(username => {
+            const element =
+                document.createElement(
+                    "div"
+                );
 
-        const element =
-            document.createElement("div");
+            element.className =
+                "admin-item";
 
-        element.className =
-            "admin-item";
+            element.textContent =
+                "@" + username;
 
-        element.textContent =
-            "@" + username;
-
-        usersBox.appendChild(
-            element
-        );
-
-    });
-
-    /*
-    MENSAGENS
-    */
-
-    data.messages.forEach(message => {
-
-        const element =
-            document.createElement("div");
-
-        element.className =
-            "admin-item";
-
-        const header =
-            document.createElement("strong");
-
-        header.textContent =
-            "@" +
-            message.from +
-            " → @" +
-            message.to;
-
-        element.appendChild(
-            header
-        );
-
-        if (
-            message.type === "image"
-        ) {
-
-            const label =
-                document.createElement("span");
-
-            label.textContent =
-                "[foto temporária]";
-
-            element.appendChild(
-                label
-            );
-
-            const image =
-                document.createElement("img");
-
-            image.src =
-                message.dataUrl;
-
-            image.style.maxWidth =
-                "180px";
-
-            image.style.marginTop =
-                "6px";
-
-            image.style.borderRadius =
-                "8px";
-
-            element.appendChild(
-                image
-            );
-
-        } else {
-
-            const text =
-                document.createElement("span");
-
-            text.textContent =
-                message.body;
-
-            element.appendChild(
-                text
+            usersBox.appendChild(
+                element
             );
 
         }
+    );
 
-        messagesBox.appendChild(
-            element
-        );
+    data.messages.forEach(
+        message => {
 
-    });
+            const element =
+                document.createElement(
+                    "div"
+                );
 
+            element.className =
+                "admin-item";
+
+            const header =
+                document.createElement(
+                    "strong"
+                );
+
+            header.textContent =
+                "@" +
+                message.from +
+                " → @" +
+                message.to;
+
+            element.appendChild(
+                header
+            );
+
+            if (
+                message.type ===
+                "image"
+            ) {
+
+                const label =
+                    document.createElement(
+                        "span"
+                    );
+
+                label.textContent =
+                    "[foto temporária]";
+
+                element.appendChild(
+                    label
+                );
+
+                const image =
+                    document.createElement(
+                        "img"
+                    );
+
+                image.src =
+                    message.dataUrl;
+
+                image.style.maxWidth =
+                    "180px";
+
+                image.style.marginTop =
+                    "6px";
+
+                image.style.borderRadius =
+                    "8px";
+
+                element.appendChild(
+                    image
+                );
+
+            } else {
+
+                const text =
+                    document.createElement(
+                        "span"
+                    );
+
+                text.textContent =
+                    message.body;
+
+                element.appendChild(
+                    text
+                );
+            }
+
+            messagesBox.appendChild(
+                element
+            );
+
+        }
+    );
 }
 
 /*
@@ -976,153 +1242,4 @@ INICIAR
 ====================================
 */
 
-start();      $("myUsername").textContent="@"+me;
-      $("myAvatar").textContent=initials(me);
-      if(me==="lanzoh21") $("adminOpen").classList.remove("hidden");
-    }
-    if(d.type==="users"){
-      users=d.users;
-      renderUsers();
-      $("chatStatus").textContent = current && users.some(u=>u.username===current) ? "online" : "offline";
-    }
-    if(d.type==="history"){
-      historyCache.set(d.withUser,d.messages || []);
-      if(current===d.withUser) renderMessages(d.messages || []);
-    }
-    if(d.type==="message"){
-      const other=d.message.from===me?d.message.to:d.message.from;
-      const arr=historyCache.get(other)||[];
-      if(!arr.some(x=>x.id===d.message.id)) arr.push(d.message);
-      historyCache.set(other,arr);
-      if(current===other) renderMessages(arr);
-      else toast("Nova mensagem de @"+d.message.from);
-    }
-    if(d.type==="typing"){
-      if(current===d.from){
-        $("typing").textContent=d.active ? "@"+d.from+" está digitando..." : "";
-        $("typing").classList.toggle("hidden",!d.active);
-      }
-    }
-    if(d.type==="admin_snapshot") renderAdmin(d);
-    if(d.type==="error") toast(d.message);
-  };
-}
-
-function renderUsers(){
-  $("users").innerHTML="";
-  users.filter(u=>u.username!==me).forEach(u=>{
-    const el=document.createElement("div");
-    el.className="user"+(u.username===current?" active":"");
-    el.innerHTML=`<div class="avatar">${initials(u.username)}</div>
-      <div class="uinfo"><strong>@${u.username}</strong><small>online</small></div><span class="dot"></span>`;
-    el.onclick=()=>openUser(u.username);
-    $("users").appendChild(el);
-  });
-  if(users.length<=1){
-    $("users").innerHTML='<div style="padding:18px;color:#555;font-size:11px">Ninguém mais está online.</div>';
-  }
-}
-
-function openUser(username){
-  current=username;
-  $("chatUser").textContent="@"+username;
-  $("chatStatus").textContent="online";
-  $("chatAvatar").textContent=initials(username);
-  $("empty").classList.add("hidden");
-  $("messages").classList.remove("hidden");
-  $("composer").classList.remove("hidden");
-  $("sidebar").classList.remove("open");
-  send({action:"history",withUser:username});
-}
-
-function renderMessages(list){
-  const box=$("messages");
-  box.innerHTML="";
-  for(const m of list){
-    const el=document.createElement("div");
-    el.className="bubble "+(m.from===me?"mine":"theirs");
-    let content="";
-    if(m.type==="image"){
-      const img=document.createElement("img");
-      img.src=m.dataUrl; img.alt="foto";
-      img.onclick=()=>window.open(m.dataUrl,"_blank");
-      el.appendChild(img);
-      if(m.body) content += escapeHtml(m.body);
-    } else {
-      content=escapeHtml(m.body).replace(/\n/g,"<br>");
-      el.innerHTML += content;
-    }
-    if(m.type==="image" && content){
-      const p=document.createElement("div"); p.innerHTML=content; el.appendChild(p);
-    }
-    const time=document.createElement("span");
-    time.className="time";
-    time.textContent=new Date(m.at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-    el.appendChild(time);
-    box.appendChild(el);
-  }
-  box.scrollTop=box.scrollHeight;
-}
-
-function escapeHtml(s){
-  return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
-}
-
-$("enterBtn").onclick=()=>{
-  const u=$("usernameInput").value.trim().toLowerCase();
-  if(!/^[a-z0-9_]{3,24}$/.test(u)){
-    $("loginError").textContent="Use 3–24 caracteres: letras, números ou _.";
-    return;
-  }
-  $("loginError").textContent="";
-  send({action:"login",username:u});
-};
-$("usernameInput").addEventListener("keydown",e=>{if(e.key==="Enter")$("enterBtn").click()});
-
-$("composer").onsubmit=e=>{
-  e.preventDefault();
-  const input=$("message"), body=input.value.trim();
-  if(!body||!current)return;
-  send({action:"message",to:current,body});
-  input.value="";
-};
-
-$("message").addEventListener("input",()=>{
-  if(!current)return;
-  send({action:"typing",to:current,active:$("message").value.length>0});
-});
-
-$("photo").onchange=async()=>{
-  const file=$("photo").files[0]; $("photo").value="";
-  if(!file||!current)return;
-  if(file.size>4.5*1024*1024){toast("Foto grande demais.");return;}
-  const reader=new FileReader();
-  reader.onload=()=>send({action:"photo",to:current,dataUrl:reader.result});
-  reader.readAsDataURL(file);
-};
-
-$("openSide").onclick=()=>$("sidebar").classList.add("open");
-$("closeSide").onclick=()=>$("sidebar").classList.remove("open");
-$("clearLocal").onclick=()=>{ $("messages").innerHTML=""; historyCache.delete(current); };
-$("adminOpen").onclick=()=>{ $("adminPanel").classList.remove("hidden"); send({action:"admin_snapshot"}); };
-$("adminClose").onclick=()=>$("adminPanel").classList.add("hidden");
-
-function renderAdmin(d){
-  $("adminUsers").innerHTML="";
-  for(const u of d.users){
-    const x=document.createElement("div");x.className="admin-item";x.textContent="@"+u;$("adminUsers").appendChild(x);
-  }
-  $("adminMessages").innerHTML="";
-  for(const m of d.messages){
-    const x=document.createElement("div");x.className="admin-item";
-    if(m.type==="image"){
-      x.innerHTML=`<strong>@${escapeHtml(m.from)} → @${escapeHtml(m.to)}</strong><span>[foto temporária]</span>`;
-      const img=document.createElement("img");img.src=m.dataUrl;img.style.maxWidth="180px";img.style.marginTop="6px";img.style.borderRadius="8px";x.appendChild(img);
-    }else{
-      x.innerHTML=`<strong>@${escapeHtml(m.from)} → @${escapeHtml(m.to)}</strong><span>${escapeHtml(m.body)}</span>`;
-    }
-    $("adminMessages").appendChild(x);
-  }
-}
-
-start();
+connect();
